@@ -1,0 +1,382 @@
+name: Deploy Managed Analytics
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+  workflow_dispatch:
+    inputs:
+      team:
+        description: Team deployment boundary
+        required: true
+        type: choice
+        options:
+          - data-ingestion
+          - monitoring
+          - dpt
+
+      environment:
+        description: Target release environment
+        required: true
+        type: choice
+        options:
+          - qa
+          - prod
+
+      release_number:
+        description: Release number
+        required: true
+        type: string
+
+      commit_sha:
+        description: Exact main commit SHA for QA deployment
+        required: false
+        type: string
+
+      qa_tag:
+        description: Approved QA tag for PROD deployment
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+
+# ============================================================
+# DEV
+#
+# Runs only for an open PR targeting main.
+# The PR revision is deployed to DEV.
+# No release tag is created.
+# ============================================================
+
+jobs:
+  resolve-dev-team:
+    name: Resolve DEV Team
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    outputs:
+      team: ${{ steps.resolve.outputs.team }}
+
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve team deployment boundary
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin "${{ github.base_ref }}"
+
+          CHANGED_FILES="$(
+            git diff \
+              --name-only \
+              "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
+          )"
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          TEAMS="$(
+            echo "$CHANGED_FILES" \
+              | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
+              | sort -u
+          )"
+
+          TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
+
+          if [[ "$TEAM_COUNT" -eq 0 ]]; then
+            echo "ERROR: No team deployment boundary detected."
+            exit 1
+          fi
+
+          if [[ "$TEAM_COUNT" -gt 1 ]]; then
+            echo "ERROR: Multiple team deployment boundaries detected:"
+            echo "$TEAMS"
+            exit 1
+          fi
+
+          TEAM="$(echo "$TEAMS" | head -n 1)"
+
+          if [[ ! -d "teams/$TEAM" ]]; then
+            echo "ERROR: Team directory does not exist: teams/$TEAM"
+            exit 1
+          fi
+
+          echo "DEV team: $TEAM"
+          echo "team=$TEAM" >> "$GITHUB_OUTPUT"
+
+
+  deploy-dev:
+    name: Deploy DEV
+    if: github.event_name == 'pull_request'
+    needs: resolve-dev-team
+    runs-on: ubuntu-latest
+
+    environment: dev
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validate bundle
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          databricks bundle validate \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}"
+
+      - name: Deploy bundle
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          databricks bundle deploy \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}"
+
+
+# ============================================================
+# QA / PROD RELEASE RESOLUTION
+#
+# QA:
+#   exact main SHA -> QA tag
+#
+# PROD:
+#   existing QA tag -> exact same SHA -> PROD tag
+# ============================================================
+
+  resolve-release:
+    name: Resolve ${{ inputs.environment }} Release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch main and tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin main --tags --force
+
+      - name: Resolve release revision
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TEAM="${{ inputs.team }}"
+          ENVIRONMENT="${{ inputs.environment }}"
+          RELEASE_NUMBER="${{ inputs.release_number }}"
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          QA_TAG="${{ inputs.qa_tag }}"
+
+          if [[ "$ENVIRONMENT" == "qa" ]]; then
+
+            if [[ -z "$COMMIT_SHA" ]]; then
+              echo "ERROR: commit_sha is required for QA."
+              exit 1
+            fi
+
+            if [[ -n "$QA_TAG" ]]; then
+              echo "ERROR: qa_tag must not be supplied for QA."
+              exit 1
+            fi
+
+            if ! git cat-file -e "${COMMIT_SHA}^{commit}" 2>/dev/null; then
+              echo "ERROR: Commit does not exist: $COMMIT_SHA"
+              exit 1
+            fi
+
+            if ! git merge-base --is-ancestor \
+              "$COMMIT_SHA" \
+              "origin/main"; then
+              echo "ERROR: Commit is not part of main."
+              exit 1
+            fi
+
+            SOURCE_SHA="$(git rev-parse "${COMMIT_SHA}^{commit}")"
+            RELEASE_TAG="${TEAM}/qa-${RELEASE_NUMBER}"
+
+          elif [[ "$ENVIRONMENT" == "prod" ]]; then
+
+            if [[ -z "$QA_TAG" ]]; then
+              echo "ERROR: qa_tag is required for PROD."
+              exit 1
+            fi
+
+            if [[ -n "$COMMIT_SHA" ]]; then
+              echo "ERROR: commit_sha must not be supplied for PROD."
+              exit 1
+            fi
+
+            EXPECTED_PREFIX="${TEAM}/qa-"
+
+            if [[ "$QA_TAG" != "$EXPECTED_PREFIX"* ]]; then
+              echo "ERROR: QA tag '$QA_TAG' does not belong to team '$TEAM'."
+              exit 1
+            fi
+
+            if ! git rev-parse "refs/tags/$QA_TAG" >/dev/null 2>&1; then
+              echo "ERROR: QA tag does not exist: $QA_TAG"
+              exit 1
+            fi
+
+            SOURCE_SHA="$(git rev-parse "${QA_TAG}^{commit}")"
+            RELEASE_TAG="${TEAM}/prod-${RELEASE_NUMBER}"
+
+          else
+            echo "ERROR: Unsupported environment: $ENVIRONMENT"
+            exit 1
+          fi
+
+          echo "Resolved release:"
+          echo "  Team:        $TEAM"
+          echo "  Environment: $ENVIRONMENT"
+          echo "  Source SHA:  $SOURCE_SHA"
+          echo "  Release tag: $RELEASE_TAG"
+
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "ERROR: Release tag already exists: $RELEASE_TAG"
+            exit 1
+          fi
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
+          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
+
+          echo "Creating:"
+          echo "  $RELEASE_TAG -> $SOURCE_SHA"
+
+          git tag "$RELEASE_TAG" "$SOURCE_SHA"
+          git push origin "$RELEASE_TAG"
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
+          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
+
+          TAG_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+          if [[ "$TAG_SHA" != "$SOURCE_SHA" ]]; then
+            echo "ERROR: Release tag SHA does not match source SHA."
+            exit 1
+          fi
+
+          echo "Release tag verified:"
+          echo "  $RELEASE_TAG -> $TAG_SHA"
+
+
+# ============================================================
+# QA / PROD DEPLOYMENT
+# ============================================================
+
+  deploy-release:
+    name: Deploy ${{ inputs.environment }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: resolve-release
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.environment }}
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout exact release revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validate bundle
+        working-directory: teams/${{ inputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          databricks bundle validate \
+            -t "${{ inputs.environment }}"
+
+      - name: Deploy bundle
+        working-directory: teams/${{ inputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          databricks bundle deploy \
+            -t "${{ inputs.environment }}"
+
+      - name: Verify deployed revision
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXPECTED_SHA="${{ needs.resolve-release.outputs.source_sha }}"
+          DEPLOYED_SHA="$(git rev-parse HEAD)"
+
+          echo "Expected SHA: $EXPECTED_SHA"
+          echo "Deployed SHA: $DEPLOYED_SHA"
+
+          if [[ "$EXPECTED_SHA" != "$DEPLOYED_SHA" ]]; then
+            echo "ERROR: Deployment revision does not match release revision."
+            exit 1
+          fi
+
+          echo "Deployment revision verified successfully."
