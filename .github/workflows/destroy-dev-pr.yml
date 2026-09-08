@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   resolve-dev-team:
@@ -28,19 +29,20 @@ jobs:
 
       - name: Resolve team deployment boundary
         id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          git fetch origin "${{ github.base_ref }}"
-
           CHANGED_FILES="$(
-            git diff \
-              --name-only \
-              "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
+            gh api \
+              --paginate \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+              --jq '.[].filename'
           )"
 
-          echo "Changed files:"
+          echo "PR files:"
           echo "$CHANGED_FILES"
 
           TEAMS="$(
@@ -67,8 +69,9 @@ jobs:
 
           TEAM="$(echo "$TEAMS" | head -n 1)"
 
-          if [[ ! -d "teams/$TEAM" ]]; then
-            echo "ERROR: Team directory does not exist: teams/$TEAM"
+          if [[ ! -f "teams/$TEAM/databricks.yml" ]]; then
+            echo "ERROR: Bundle configuration not found:"
+            echo "teams/$TEAM/databricks.yml"
             exit 1
           fi
 
@@ -76,7 +79,6 @@ jobs:
 
           echo "team=$TEAM" >> "$GITHUB_OUTPUT"
           echo "should_destroy=true" >> "$GITHUB_OUTPUT"
-
 
   destroy-dev:
     name: Destroy DEV
