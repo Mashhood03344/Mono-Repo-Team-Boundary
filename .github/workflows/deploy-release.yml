@@ -1,3 +1,5 @@
+# Workflow for deploying Managed Analytics bundles to Databricks environments.
+
 name: Deploy Managed Analytics
 
 on:
@@ -56,121 +58,121 @@ permissions:
 # ============================================================
 
 jobs:
-resolve-dev-team:
-  name: Resolve DEV Team
-  if: github.event_name == 'pull_request'
-  runs-on: ubuntu-latest
+  resolve-dev-team:
+    name: Resolve DEV Team
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
 
-  outputs:
-    team: ${{ steps.resolve.outputs.team }}
-    should_deploy: ${{ steps.resolve.outputs.should_deploy }}
+    outputs:
+      team: ${{ steps.resolve.outputs.team }}
+      should_deploy: ${{ steps.resolve.outputs.should_deploy }}
 
-  steps:
-    - name: Checkout PR revision
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Resolve team deployment boundary
-      id: resolve
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Resolve team deployment boundary
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        git fetch origin "${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}"
 
-        CHANGED_FILES="$(
-          git diff \
-            --name-only \
-            "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
-        )"
+          CHANGED_FILES="$(
+            git diff \
+              --name-only \
+              "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
+          )"
 
-        echo "Changed files:"
-        echo "$CHANGED_FILES"
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
 
-        TEAMS="$(
-          echo "$CHANGED_FILES" \
-            | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
-            | sort -u
-        )"
+          TEAMS="$(
+            echo "$CHANGED_FILES" \
+              | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
+              | sort -u
+          )"
 
-        TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
+          TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
 
-        if [[ "$TEAM_COUNT" -eq 0 ]]; then
-          echo "No team deployment boundary detected."
-          echo "This is a platform-only PR."
-          echo "DEV deployment will be skipped."
+          if [[ "$TEAM_COUNT" -eq 0 ]]; then
+            echo "No team deployment boundary detected."
+            echo "This is a platform-only PR."
+            echo "DEV deployment will be skipped."
 
-          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-        if [[ "$TEAM_COUNT" -gt 1 ]]; then
-          echo "ERROR: Multiple team deployment boundaries detected:"
-          echo "$TEAMS"
-          exit 1
-        fi
+          if [[ "$TEAM_COUNT" -gt 1 ]]; then
+            echo "ERROR: Multiple team deployment boundaries detected:"
+            echo "$TEAMS"
+            exit 1
+          fi
 
-        TEAM="$(echo "$TEAMS" | head -n 1)"
+          TEAM="$(echo "$TEAMS" | head -n 1)"
 
-        if [[ ! -f "teams/$TEAM/databricks.yml" ]]; then
-          echo "ERROR: Bundle configuration not found:"
-          echo "teams/$TEAM/databricks.yml"
-          exit 1
-        fi
+          if [[ ! -f "teams/$TEAM/databricks.yml" ]]; then
+            echo "ERROR: Bundle configuration not found:"
+            echo "teams/$TEAM/databricks.yml"
+            exit 1
+          fi
 
-        echo "DEV team: $TEAM"
+          echo "DEV team: $TEAM"
 
-        echo "team=$TEAM" >> "$GITHUB_OUTPUT"
-        echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "team=$TEAM" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
 
-deploy-dev:
-  name: Deploy DEV
-  needs: resolve-dev-team
+  deploy-dev:
+    name: Deploy DEV
+    needs: resolve-dev-team
 
-  if: |
-    github.event_name == 'pull_request' &&
-    needs.resolve-dev-team.outputs.should_deploy == 'true'
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.resolve-dev-team.outputs.should_deploy == 'true'
 
-  runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
 
-  environment: dev
+    environment: dev
 
-  env:
-    DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-    DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-    DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
-  steps:
-    - name: Checkout PR revision
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
-        fetch-depth: 0
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
-    - name: Setup Databricks CLI
-      uses: databricks/setup-cli@main
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
 
-    - name: Validate bundle
-      working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Validate bundle
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        databricks bundle validate \
-          -t dev \
-          --var "pr_id=${{ github.event.pull_request.number }}"
+          databricks bundle validate \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}"
 
-    - name: Deploy bundle
-      working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Deploy bundle
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        databricks bundle deploy \
-          -t dev \
-          --var "pr_id=${{ github.event.pull_request.number }}"
+          databricks bundle deploy \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}"
 
 # ============================================================
 # QA / PROD RELEASE RESOLUTION
