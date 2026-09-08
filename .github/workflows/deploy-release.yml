@@ -1,3 +1,5 @@
+# Workflow for deploying Managed Analytics bundles to Databricks environments.
+
 name: Deploy Managed Analytics
 
 on:
