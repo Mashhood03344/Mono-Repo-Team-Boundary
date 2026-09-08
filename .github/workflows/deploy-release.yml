@@ -56,110 +56,121 @@ permissions:
 # ============================================================
 
 jobs:
-  resolve-dev-team:
-    name: Resolve DEV Team
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+resolve-dev-team:
+  name: Resolve DEV Team
+  if: github.event_name == 'pull_request'
+  runs-on: ubuntu-latest
 
-    outputs:
-      team: ${{ steps.resolve.outputs.team }}
+  outputs:
+    team: ${{ steps.resolve.outputs.team }}
+    should_deploy: ${{ steps.resolve.outputs.should_deploy }}
 
-    steps:
-      - name: Checkout PR revision
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+  steps:
+    - name: Checkout PR revision
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-      - name: Resolve team deployment boundary
-        id: resolve
-        shell: bash
-        run: |
-          set -euo pipefail
+    - name: Resolve team deployment boundary
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
 
-          git fetch origin "${{ github.base_ref }}"
+        git fetch origin "${{ github.base_ref }}"
 
-          CHANGED_FILES="$(
-            git diff \
-              --name-only \
-              "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
-          )"
+        CHANGED_FILES="$(
+          git diff \
+            --name-only \
+            "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
+        )"
 
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
 
-          TEAMS="$(
-            echo "$CHANGED_FILES" \
-              | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
-              | sort -u
-          )"
+        TEAMS="$(
+          echo "$CHANGED_FILES" \
+            | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
+            | sort -u
+        )"
 
-          TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
+        TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
 
-          if [[ "$TEAM_COUNT" -eq 0 ]]; then
-            echo "ERROR: No team deployment boundary detected."
-            exit 1
-          fi
+        if [[ "$TEAM_COUNT" -eq 0 ]]; then
+          echo "No team deployment boundary detected."
+          echo "This is a platform-only PR."
+          echo "DEV deployment will be skipped."
 
-          if [[ "$TEAM_COUNT" -gt 1 ]]; then
-            echo "ERROR: Multiple team deployment boundaries detected:"
-            echo "$TEAMS"
-            exit 1
-          fi
+          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
 
-          TEAM="$(echo "$TEAMS" | head -n 1)"
+        if [[ "$TEAM_COUNT" -gt 1 ]]; then
+          echo "ERROR: Multiple team deployment boundaries detected:"
+          echo "$TEAMS"
+          exit 1
+        fi
 
-          if [[ ! -d "teams/$TEAM" ]]; then
-            echo "ERROR: Team directory does not exist: teams/$TEAM"
-            exit 1
-          fi
+        TEAM="$(echo "$TEAMS" | head -n 1)"
 
-          echo "DEV team: $TEAM"
-          echo "team=$TEAM" >> "$GITHUB_OUTPUT"
+        if [[ ! -f "teams/$TEAM/databricks.yml" ]]; then
+          echo "ERROR: Bundle configuration not found:"
+          echo "teams/$TEAM/databricks.yml"
+          exit 1
+        fi
+
+        echo "DEV team: $TEAM"
+
+        echo "team=$TEAM" >> "$GITHUB_OUTPUT"
+        echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
 
-  deploy-dev:
-    name: Deploy DEV
-    if: github.event_name == 'pull_request'
-    needs: resolve-dev-team
-    runs-on: ubuntu-latest
+deploy-dev:
+  name: Deploy DEV
+  needs: resolve-dev-team
 
-    environment: dev
+  if: |
+    github.event_name == 'pull_request' &&
+    needs.resolve-dev-team.outputs.should_deploy == 'true'
 
-    env:
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout PR revision
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
+  environment: dev
 
-      - name: Setup Databricks CLI
-        uses: databricks/setup-cli@main
+  env:
+    DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+    DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+    DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
-      - name: Validate bundle
-        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
-        shell: bash
-        run: |
-          set -euo pipefail
+  steps:
+    - name: Checkout PR revision
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
 
-          databricks bundle validate \
-            -t dev \
-            --var "pr_id=${{ github.event.pull_request.number }}"
+    - name: Setup Databricks CLI
+      uses: databricks/setup-cli@main
 
-      - name: Deploy bundle
-        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
-        shell: bash
-        run: |
-          set -euo pipefail
+    - name: Validate bundle
+      working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+      shell: bash
+      run: |
+        set -euo pipefail
 
-          databricks bundle deploy \
-            -t dev \
-            --var "pr_id=${{ github.event.pull_request.number }}"
+        databricks bundle validate \
+          -t dev \
+          --var "pr_id=${{ github.event.pull_request.number }}"
 
+    - name: Deploy bundle
+      working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        databricks bundle deploy \
+          -t dev \
+          --var "pr_id=${{ github.event.pull_request.number }}"
 
 # ============================================================
 # QA / PROD RELEASE RESOLUTION
