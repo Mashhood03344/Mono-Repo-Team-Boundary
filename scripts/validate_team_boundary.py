@@ -1,3 +1,5 @@
+# Validator for Team Boundaries in a Monorepo
+
 from pathlib import PurePosixPath
 from typing import Iterable, Set
 
