@@ -1,0 +1,1 @@
+SELECT 1 AS ingestion_boundary;
