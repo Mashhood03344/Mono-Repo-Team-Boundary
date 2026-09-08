@@ -1,0 +1,66 @@
+name: Validate Team Boundary
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  validate-team-boundary:
+    name: Validate Team Boundary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get changed files
+        id: changed-files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "Base SHA: $BASE_SHA"
+          echo "Head SHA: $HEAD_SHA"
+
+          git diff \
+            --name-only \
+            --diff-filter=ACMRD \
+            "$BASE_SHA" \
+            "$HEAD_SHA" \
+            > changed-files.txt
+
+          echo "Changed files:"
+          cat changed-files.txt
+
+          if [[ ! -s changed-files.txt ]]; then
+            echo "No changed files detected."
+            exit 1
+          fi
+
+      - name: Validate repository boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t CHANGED_FILES < changed-files.txt
+
+          python scripts/validate_team_boundary.py \
+            "${CHANGED_FILES[@]}"
