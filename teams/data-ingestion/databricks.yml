@@ -1,0 +1,24 @@
+bundle:
+  name: data-ingestion
+
+include:
+  - resources/*.yml
+
+variables:
+  pr_id:
+    description: Pull request ID used for DEV deployment isolation
+    default: ""
+
+targets:
+  dev:
+    mode: production
+    default: true
+
+    workspace:
+      root_path: /Users/${workspace.current_user.userName}/${bundle.target}/pr-${var.pr_id}/asset_bundle/.bundle/${bundle.name}
+
+  qa:
+    mode: production
+
+  prod:
+    mode: production
