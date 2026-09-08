@@ -1,0 +1,131 @@
+name: Destroy DEV PR Resources
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-dev-team:
+    name: Resolve DEV Team
+    runs-on: ubuntu-latest
+
+    outputs:
+      team: ${{ steps.resolve.outputs.team }}
+      should_destroy: ${{ steps.resolve.outputs.should_destroy }}
+
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Resolve team deployment boundary
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin "${{ github.base_ref }}"
+
+          CHANGED_FILES="$(
+            git diff \
+              --name-only \
+              "origin/${{ github.base_ref }}...${{ github.event.pull_request.head.sha }}"
+          )"
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          TEAMS="$(
+            echo "$CHANGED_FILES" \
+              | awk -F/ '$1 == "teams" && NF >= 2 {print $2}' \
+              | sort -u
+          )"
+
+          TEAM_COUNT="$(echo "$TEAMS" | sed '/^$/d' | wc -l)"
+
+          if [[ "$TEAM_COUNT" -eq 0 ]]; then
+            echo "No team deployment boundary detected."
+            echo "No DEV resources require cleanup."
+
+            echo "should_destroy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$TEAM_COUNT" -gt 1 ]]; then
+            echo "ERROR: Multiple team deployment boundaries detected:"
+            echo "$TEAMS"
+            exit 1
+          fi
+
+          TEAM="$(echo "$TEAMS" | head -n 1)"
+
+          if [[ ! -d "teams/$TEAM" ]]; then
+            echo "ERROR: Team directory does not exist: teams/$TEAM"
+            exit 1
+          fi
+
+          echo "DEV team: $TEAM"
+
+          echo "team=$TEAM" >> "$GITHUB_OUTPUT"
+          echo "should_destroy=true" >> "$GITHUB_OUTPUT"
+
+
+  destroy-dev:
+    name: Destroy DEV
+    needs: resolve-dev-team
+
+    if: needs.resolve-dev-team.outputs.should_destroy == 'true'
+
+    runs-on: ubuntu-latest
+
+    environment: dev
+
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+    steps:
+      - name: Checkout PR revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validate bundle
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          databricks bundle validate \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}"
+
+      - name: Destroy PR resources
+        working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Destroying DEV resources for:"
+          echo "  Team: ${{ needs.resolve-dev-team.outputs.team }}"
+          echo "  PR:   ${{ github.event.pull_request.number }}"
+
+          databricks bundle destroy \
+            -t dev \
+            --var "pr_id=${{ github.event.pull_request.number }}" \
+            --auto-approve
+
+          echo "DEV PR resources destroyed successfully."
