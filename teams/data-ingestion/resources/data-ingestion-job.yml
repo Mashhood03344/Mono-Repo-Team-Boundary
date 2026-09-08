@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    data_ingestion_validation:
+      name: data-ingestion-validation-pr-${var.pr_id}
+
+      tasks:
+        - task_key: validate_environment
+
+          notebook_task:
+            notebook_path: ../src/ingestion_validation.py
