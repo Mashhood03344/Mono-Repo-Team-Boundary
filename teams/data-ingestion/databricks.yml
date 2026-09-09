@@ -40,7 +40,7 @@ targets:
       root_path: /Users/${workspace.current_user.userName}/${bundle.target}/asset_bundle/.bundle/${bundle.name}
 
 
-  resources:
-      jobs:
-        data_ingestion_validation:
-          name: data-ingestion-validation-prod
+    resources:
+        jobs:
+          data_ingestion_validation:
+            name: data-ingestion-validation-prod
