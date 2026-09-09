@@ -336,7 +336,7 @@ jobs:
           databricks bundle deploy \
             -t "${{ inputs.environment }}"
 
-      - name: Verify deployed revision
+      - name: Verify release checkout
         shell: bash
         run: |
           set -euo pipefail
@@ -353,31 +353,6 @@ jobs:
           fi
 
           echo "Deployment revision verified successfully."
-
-      - name: Validate release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ needs.resolve-release.outputs.source_sha }}"
-          RELEASE_TAG="${{ needs.resolve-release.outputs.release_tag }}"
-
-          git fetch origin --tags --force
-
-          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-
-            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
-
-            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
-              echo "ERROR: Release tag already exists with a different SHA."
-              echo "Tag:           $RELEASE_TAG"
-              echo "Existing SHA:  $EXISTING_SHA"
-              echo "Requested SHA: $SOURCE_SHA"
-              exit 1
-            fi
-
-            echo "Release tag already exists and points to the expected SHA."
-          fi
 
       - name: Create or verify release tag
         shell: bash
