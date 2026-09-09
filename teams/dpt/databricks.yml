@@ -1,0 +1,45 @@
+bundle:
+  name: dpt
+
+include:
+  - resources/*.yml
+
+variables:
+  pr_id:
+    description: Pull request ID used for DEV deployment isolation
+    default: ""
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+    workspace:
+      root_path: /Users/${workspace.current_user.userName}/${bundle.target}/pr-${var.pr_id}/asset_bundle/.bundle/${bundle.name}
+
+    resources:
+      jobs:
+        dpt_validation:
+          name: dpt-validation-pr-${var.pr_id}
+
+  qa:
+    mode: production
+
+    workspace:
+      root_path: /Users/${workspace.current_user.userName}/${bundle.target}/asset_bundle/.bundle/${bundle.name}
+
+    resources:
+      jobs:
+        dpt_validation:
+          name: dpt-validation-qa
+
+  prod:
+    mode: production
+
+    workspace:
+      root_path: /Users/${workspace.current_user.userName}/${bundle.target}/asset_bundle/.bundle/${bundle.name}
+
+    resources:
+      jobs:
+        dpt_validation:
+          name: dpt-validation-prod
