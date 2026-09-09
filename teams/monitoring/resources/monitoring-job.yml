@@ -1,0 +1,10 @@
+resources:
+  jobs:
+   monitoring_validation:
+      name: monitoring-validation
+      
+      tasks:
+        - task_key: validate_environment
+
+          notebook_task:
+            notebook_path: ../src/monitoring_validation.py
