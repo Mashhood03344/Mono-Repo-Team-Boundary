@@ -1,0 +1,10 @@
+resources:
+  jobs:
+    dpt_validation:
+      name: dpt-validation
+
+      tasks:
+        - task_key: validate_environment
+
+          notebook_task:
+            notebook_path: ../src/dpt_validation.py
