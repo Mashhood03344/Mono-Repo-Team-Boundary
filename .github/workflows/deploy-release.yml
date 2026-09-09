@@ -342,17 +342,17 @@ jobs:
           set -euo pipefail
 
           EXPECTED_SHA="${{ needs.resolve-release.outputs.source_sha }}"
-          DEPLOYED_SHA="$(git rev-parse HEAD)"
+          CHECKOUT_SHA="$(git rev-parse HEAD)"
 
           echo "Expected SHA: $EXPECTED_SHA"
-          echo "Deployed SHA: $DEPLOYED_SHA"
+          echo "Checked-out SHA: $CHECKOUT_SHA"
 
-          if [[ "$EXPECTED_SHA" != "$DEPLOYED_SHA" ]]; then
-            echo "ERROR: Deployment revision does not match release revision."
+          if [[ "$EXPECTED_SHA" != "$CHECKOUT_SHA" ]]; then
+            echo "ERROR: Release checkout does not match expected revision."
             exit 1
           fi
 
-          echo "Deployment revision verified successfully."
+          echo "Release checkout verified successfully."
 
       - name: Create or verify release tag
         shell: bash
