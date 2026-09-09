@@ -46,7 +46,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 
 # ============================================================
@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout PR revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -146,13 +146,15 @@ jobs:
 
     steps:
       - name: Checkout PR revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Setup Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@60b64e3937ee15f5a8b914664d1e78a586a9a4da
+        with:
+          version: 1.11.0
 
       - name: Validate bundle
         working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
@@ -195,7 +197,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -286,49 +288,27 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Validate release tag
+      - name: Validate release tag state
         shell: bash
         run: |
           set -euo pipefail
 
+          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
           RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
 
           if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "ERROR: Release tag already exists: $RELEASE_TAG"
-            exit 1
+            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
+              echo "ERROR: Release tag already exists with a different SHA."
+              echo "Tag:           $RELEASE_TAG"
+              echo "Existing SHA:  $EXISTING_SHA"
+              echo "Requested SHA: $SOURCE_SHA"
+              exit 1
+            fi
+
+            echo "Existing release tag matches requested SHA."
           fi
-
-      - name: Create release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
-          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          echo "Creating:"
-          echo "  $RELEASE_TAG -> $SOURCE_SHA"
-
-          git tag "$RELEASE_TAG" "$SOURCE_SHA"
-          git push origin "$RELEASE_TAG"
-
-      - name: Verify release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
-          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          TAG_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
-
-          if [[ "$TAG_SHA" != "$SOURCE_SHA" ]]; then
-            echo "ERROR: Release tag SHA does not match source SHA."
-            exit 1
-          fi
-
-          echo "Release tag verified:"
-          echo "  $RELEASE_TAG -> $TAG_SHA"
 
 
 # ============================================================
@@ -341,6 +321,13 @@ jobs:
     needs: resolve-release
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
+    concurrency:
+      group: managed-analytics-${{ inputs.team }}-${{ inputs.environment }}
+      cancel-in-progress: false
+
     environment: ${{ inputs.environment }}
 
     env:
@@ -350,13 +337,15 @@ jobs:
 
     steps:
       - name: Checkout exact release revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.resolve-release.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Setup Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@60b64e3937ee15f5a8b914664d1e78a586a9a4da
+        with:
+          version: 1.11.0
 
       - name: Validate bundle
         working-directory: teams/${{ inputs.team }}
@@ -376,20 +365,53 @@ jobs:
           databricks bundle deploy \
             -t "${{ inputs.environment }}"
 
-      - name: Verify deployed revision
+      - name: Verify release checkout
         shell: bash
         run: |
           set -euo pipefail
 
           EXPECTED_SHA="${{ needs.resolve-release.outputs.source_sha }}"
-          DEPLOYED_SHA="$(git rev-parse HEAD)"
+          CHECKOUT_SHA="$(git rev-parse HEAD)"
 
           echo "Expected SHA: $EXPECTED_SHA"
-          echo "Deployed SHA: $DEPLOYED_SHA"
+          echo "Checked-out SHA: $CHECKOUT_SHA"
 
-          if [[ "$EXPECTED_SHA" != "$DEPLOYED_SHA" ]]; then
-            echo "ERROR: Deployment revision does not match release revision."
+          if [[ "$EXPECTED_SHA" != "$CHECKOUT_SHA" ]]; then
+            echo "ERROR: Release checkout does not match expected revision."
             exit 1
           fi
 
-          echo "Deployment revision verified successfully."
+          echo "Release checkout verified successfully."
+
+      - name: Create or verify release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ needs.resolve-release.outputs.source_sha }}"
+          RELEASE_TAG="${{ needs.resolve-release.outputs.release_tag }}"
+
+          git fetch origin --tags --force
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+
+            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
+              echo "ERROR: Release tag already exists with a different SHA."
+              echo "Tag:           $RELEASE_TAG"
+              echo "Existing SHA:  $EXISTING_SHA"
+              echo "Requested SHA: $SOURCE_SHA"
+              exit 1
+            fi
+
+            echo "Release tag already exists at the expected SHA."
+            echo "$RELEASE_TAG -> $EXISTING_SHA"
+            exit 0
+          fi
+
+          echo "Creating release tag:"
+          echo "  $RELEASE_TAG -> $SOURCE_SHA"
+
+          git tag "$RELEASE_TAG" "$SOURCE_SHA"
+          git push origin "$RELEASE_TAG"
