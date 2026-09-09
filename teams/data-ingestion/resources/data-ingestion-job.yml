@@ -1,8 +1,8 @@
 resources:
   jobs:
     data_ingestion_validation:
-      name: data-ingestion-validation-pr-${var.pr_id}
-
+      name: data-ingestion-validation
+      
       tasks:
         - task_key: validate_environment
 
