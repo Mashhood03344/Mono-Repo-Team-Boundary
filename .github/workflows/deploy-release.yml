@@ -286,6 +286,28 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Validate release tag state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
+          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
+              echo "ERROR: Release tag already exists with a different SHA."
+              echo "Tag:           $RELEASE_TAG"
+              echo "Existing SHA:  $EXISTING_SHA"
+              echo "Requested SHA: $SOURCE_SHA"
+              exit 1
+            fi
+
+            echo "Existing release tag matches requested SHA."
+          fi
+
 
 # ============================================================
 # QA / PROD DEPLOYMENT
