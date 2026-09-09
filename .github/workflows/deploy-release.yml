@@ -286,50 +286,6 @@ jobs:
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Validate release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "ERROR: Release tag already exists: $RELEASE_TAG"
-            exit 1
-          fi
-
-      - name: Create release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
-          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          echo "Creating:"
-          echo "  $RELEASE_TAG -> $SOURCE_SHA"
-
-          git tag "$RELEASE_TAG" "$SOURCE_SHA"
-          git push origin "$RELEASE_TAG"
-
-      - name: Verify release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_SHA="${{ steps.resolve.outputs.source_sha }}"
-          RELEASE_TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          TAG_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
-
-          if [[ "$TAG_SHA" != "$SOURCE_SHA" ]]; then
-            echo "ERROR: Release tag SHA does not match source SHA."
-            exit 1
-          fi
-
-          echo "Release tag verified:"
-          echo "  $RELEASE_TAG -> $TAG_SHA"
-
 
 # ============================================================
 # QA / PROD DEPLOYMENT
@@ -340,6 +296,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: resolve-release
     runs-on: ubuntu-latest
+
+    concurrency:
+      group: managed-analytics-${{ inputs.team }}-${{ inputs.environment }}
+      cancel-in-progress: false
 
     environment: ${{ inputs.environment }}
 
@@ -393,3 +353,61 @@ jobs:
           fi
 
           echo "Deployment revision verified successfully."
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ needs.resolve-release.outputs.source_sha }}"
+          RELEASE_TAG="${{ needs.resolve-release.outputs.release_tag }}"
+
+          git fetch origin --tags --force
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+
+            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
+              echo "ERROR: Release tag already exists with a different SHA."
+              echo "Tag:           $RELEASE_TAG"
+              echo "Existing SHA:  $EXISTING_SHA"
+              echo "Requested SHA: $SOURCE_SHA"
+              exit 1
+            fi
+
+            echo "Release tag already exists and points to the expected SHA."
+          fi
+
+      - name: Create or verify release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="${{ needs.resolve-release.outputs.source_sha }}"
+          RELEASE_TAG="${{ needs.resolve-release.outputs.release_tag }}"
+
+          git fetch origin --tags --force
+
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+
+            EXISTING_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+            if [[ "$EXISTING_SHA" != "$SOURCE_SHA" ]]; then
+              echo "ERROR: Release tag already exists with a different SHA."
+              echo "Tag:           $RELEASE_TAG"
+              echo "Existing SHA:  $EXISTING_SHA"
+              echo "Requested SHA: $SOURCE_SHA"
+              exit 1
+            fi
+
+            echo "Release tag already exists at the expected SHA."
+            echo "$RELEASE_TAG -> $EXISTING_SHA"
+            exit 0
+          fi
+
+          echo "Creating release tag:"
+          echo "  $RELEASE_TAG -> $SOURCE_SHA"
+
+          git tag "$RELEASE_TAG" "$SOURCE_SHA"
+          git push origin "$RELEASE_TAG"
