@@ -46,7 +46,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 
 # ============================================================
@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout PR revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -146,13 +146,15 @@ jobs:
 
     steps:
       - name: Checkout PR revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Setup Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@60b64e3937ee15f5a8b914664d1e78a586a9a4da
+        with:
+          version: 1.11.0
 
       - name: Validate bundle
         working-directory: teams/${{ needs.resolve-dev-team.outputs.team }}
@@ -195,7 +197,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -319,6 +321,9 @@ jobs:
     needs: resolve-release
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     concurrency:
       group: managed-analytics-${{ inputs.team }}-${{ inputs.environment }}
       cancel-in-progress: false
@@ -332,13 +337,15 @@ jobs:
 
     steps:
       - name: Checkout exact release revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.resolve-release.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Setup Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@60b64e3937ee15f5a8b914664d1e78a586a9a4da
+        with:
+          version: 1.11.0
 
       - name: Validate bundle
         working-directory: teams/${{ inputs.team }}
