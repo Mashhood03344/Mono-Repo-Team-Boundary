@@ -1,3 +1,6 @@
+# GitHub currently rejects the App Client ID as JWT issuer for this installation
+# with "'iss' must be an Integer"; use numeric App ID for token generation.
+
 name: Validate Team Boundary
 
 on:
@@ -63,4 +66,26 @@ jobs:
           mapfile -t CHANGED_FILES < changed-files.txt
 
           python scripts/validate_team_boundary.py \
+            "${CHANGED_FILES[@]}"
+
+      - name: Generate boundary authorization token
+        id: boundary-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOUNDARY_APP_ID }}
+          private-key: ${{ secrets.BOUNDARY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-members: read
+
+      - name: Authorize repository boundary
+        shell: bash
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BOUNDARY_TOKEN: ${{ steps.boundary-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t CHANGED_FILES < changed-files.txt
+
+          python scripts/authorize_team_boundary.py \
             "${CHANGED_FILES[@]}"
