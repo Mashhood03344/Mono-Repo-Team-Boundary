@@ -1,0 +1,6 @@
+/teams/data-ingestion/ @managed-platform/data-ingestion
+/teams/monitoring/     @managed-platform/monitoring
+/teams/dpt/            @managed-platform/dpt
+
+/.github/               @managed-platform/platform
+/scripts/               @managed-platform/platform
