@@ -65,6 +65,64 @@ jobs:
           python scripts/validate_team_boundary.py \
             "${CHANGED_FILES[@]}"
 
+      - name: Diagnose GitHub App Client ID authentication
+        shell: bash
+        env:
+          APP_CLIENT_ID: ${{ vars.BOUNDARY_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BOUNDARY_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          python -m pip install --quiet PyJWT cryptography
+
+          python <<'PY'
+          import os
+          import time
+          import jwt
+          import urllib.request
+          import urllib.error
+
+          client_id = os.environ["APP_CLIENT_ID"]
+          private_key = os.environ["APP_PRIVATE_KEY"]
+
+          now = int(time.time())
+
+          payload = {
+              "iat": now - 60,
+              "exp": now + 540,
+              "iss": client_id,
+          }
+
+          encoded_jwt = jwt.encode(
+              payload,
+              private_key,
+              algorithm="RS256",
+          )
+
+          request = urllib.request.Request(
+              "https://api.github.com/app",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {encoded_jwt}",
+                  "X-GitHub-Api-Version": "2026-03-10",
+                  "User-Agent": "monorepo-boundary-auth-diagnostic",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  print(f"GitHub App JWT authentication succeeded: HTTP {response.status}")
+
+          except urllib.error.HTTPError as exc:
+              print(f"GitHub App JWT authentication failed: HTTP {exc.code}")
+              print(exc.read().decode("utf-8"))
+              raise SystemExit(1)
+
+          except urllib.error.URLError as exc:
+              print(f"GitHub API request failed: {exc.reason}")
+              raise SystemExit(1)
+          PY
+
       - name: Generate boundary authorization token
         id: boundary-token
         uses: actions/create-github-app-token@v3
