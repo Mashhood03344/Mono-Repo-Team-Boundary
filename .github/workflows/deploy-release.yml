@@ -137,6 +137,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    concurrency:
+      group: managed-analytics-dev-${{ needs.resolve-dev-team.outputs.team }}-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
     environment: dev
 
     env:
@@ -220,6 +224,11 @@ jobs:
           COMMIT_SHA="${{ inputs.commit_sha }}"
           QA_TAG="${{ inputs.qa_tag }}"
 
+          if [[ ! "$RELEASE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+              echo "ERROR: release_number must be a positive integer."
+              exit 1
+            fi
+
           if [[ "$ENVIRONMENT" == "qa" ]]; then
 
             if [[ -z "$COMMIT_SHA" ]]; then
@@ -259,10 +268,19 @@ jobs:
               exit 1
             fi
 
-            EXPECTED_PREFIX="${TEAM}/qa-"
+            if [[ ! "$QA_TAG" =~ ^${TEAM}/qa-[1-9][0-9]*$ ]]; then
+              echo "ERROR: Invalid QA release tag: $QA_TAG"
+              echo "Expected format: ${TEAM}/qa-<positive-integer>"
+              exit 1
+            fi
 
-            if [[ "$QA_TAG" != "$EXPECTED_PREFIX"* ]]; then
-              echo "ERROR: QA tag '$QA_TAG' does not belong to team '$TEAM'."
+            QA_RELEASE_NUMBER="${QA_TAG##*-}"
+
+            if [[ "$RELEASE_NUMBER" != "$QA_RELEASE_NUMBER" ]]; then
+              echo "ERROR: PROD release_number must match the QA tag release number."
+              echo "QA tag:                 $QA_TAG"
+              echo "QA release number:      $QA_RELEASE_NUMBER"
+              echo "Requested PROD number:  $RELEASE_NUMBER"
               exit 1
             fi
 
